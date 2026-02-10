@@ -1,1 +1,0 @@
-Appwrite Agent Skills

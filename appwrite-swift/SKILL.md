@@ -1,0 +1,328 @@
+---
+name: appwrite-swift
+description: Appwrite Swift SDK skill. Use when building native iOS, macOS, watchOS, or tvOS apps, or server-side Swift applications with Appwrite. Covers client-side auth (email, OAuth), database queries, file uploads, real-time subscriptions with async/await, and server-side admin via API keys for user management, database administration, storage, and functions.
+---
+
+
+# Appwrite Swift SDK
+
+## Installation
+
+```swift
+// Swift Package Manager — Package.swift
+.package(url: "https://github.com/ChiragAgg5k/sdk-for-swift", from: "1.8.1")
+```
+
+## Setting Up the Client
+
+### Client-side (Apple platforms)
+
+```swift
+import Appwrite
+
+let client = Client()
+    .setEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .setProject("[PROJECT_ID]")
+```
+
+### Server-side (Swift)
+
+```swift
+import Appwrite
+
+let client = Client()
+    .setEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .setProject(ProcessInfo.processInfo.environment["APPWRITE_PROJECT_ID"]!)
+    .setKey(ProcessInfo.processInfo.environment["APPWRITE_API_KEY"]!)
+```
+
+## Code Examples
+
+### Authentication (client-side)
+
+```swift
+let account = Account(client)
+
+// Signup
+let user = try await account.create(userId: ID.unique(), email: "user@example.com", password: "password123", name: "User Name")
+
+// Login
+let session = try await account.createEmailPasswordSession(email: "user@example.com", password: "password123")
+
+// OAuth
+try await account.createOAuth2Session(provider: .google)
+
+// Get current user
+let me = try await account.get()
+
+// Logout
+try await account.deleteSession(sessionId: "current")
+```
+
+### User Management (server-side)
+
+```swift
+let users = Users(client)
+
+// Create user
+let user = try await users.create(userId: ID.unique(), email: "user@example.com", password: "password123", name: "User Name")
+
+// List users
+let list = try await users.list(queries: [Query.limit(25)])
+
+// Get user
+let fetched = try await users.get(userId: "[USER_ID]")
+
+// Delete user
+try await users.delete(userId: "[USER_ID]")
+```
+
+### Database Operations
+
+> **Note:** Use `TablesDB` (not the deprecated `Databases` class) for all new code. Only use `Databases` if the existing codebase already relies on it or the user explicitly requests it.
+
+```swift
+let tablesDB = TablesDB(client)
+
+// Create database (server-side only)
+let db = try await tablesDB.create(databaseId: ID.unique(), name: "My Database")
+
+// Create row
+let doc = try await tablesDB.createRow(databaseId: "[DATABASE_ID]", tableId: "[TABLE_ID]", rowId: ID.unique(), data: [
+    "title": "Hello",
+    "done": false
+])
+
+// Query rows
+let results = try await tablesDB.listRows(databaseId: "[DATABASE_ID]", tableId: "[TABLE_ID]", queries: [
+    Query.equal("done", value: false),
+    Query.limit(10)
+])
+
+// Get row
+let row = try await tablesDB.getRow(databaseId: "[DATABASE_ID]", tableId: "[TABLE_ID]", rowId: "[ROW_ID]")
+
+// Update row
+try await tablesDB.updateRow(databaseId: "[DATABASE_ID]", tableId: "[TABLE_ID]", rowId: "[ROW_ID]", data: ["done": true])
+
+// Delete row
+try await tablesDB.deleteRow(databaseId: "[DATABASE_ID]", tableId: "[TABLE_ID]", rowId: "[ROW_ID]")
+```
+
+### File Storage
+
+```swift
+let storage = Storage(client)
+
+// Upload file
+let file = try await storage.createFile(bucketId: "[BUCKET_ID]", fileId: ID.unique(), file: InputFile.fromPath("/path/to/file.png"))
+
+// List files
+let files = try await storage.listFiles(bucketId: "[BUCKET_ID]")
+
+// Delete file
+try await storage.deleteFile(bucketId: "[BUCKET_ID]", fileId: "[FILE_ID]")
+```
+
+### Real-time Subscriptions (client-side)
+
+```swift
+let realtime = Realtime(client)
+
+let subscription = realtime.subscribe(channels: ["databases.[DATABASE_ID].tables.[TABLE_ID].rows"]) { response in
+    print(response.payload)
+}
+
+// Cleanup
+subscription.close()
+```
+
+### Serverless Functions (server-side)
+
+```swift
+let functions = Functions(client)
+
+// Execute function
+let execution = try await functions.createExecution(functionId: "[FUNCTION_ID]", body: "{\"key\": \"value\"}")
+
+// List executions
+let executions = try await functions.listExecutions(functionId: "[FUNCTION_ID]")
+```
+
+### Server-Side Rendering (SSR) Authentication
+
+SSR apps using server-side Swift (Vapor, Hummingbird, etc.) use the **server SDK** to handle auth. You need two clients:
+
+- **Admin client** — uses an API key, creates sessions, bypasses rate limits (reusable singleton)
+- **Session client** — uses a session cookie, acts on behalf of a user (create per-request, never share)
+
+```swift
+import Appwrite
+
+// Admin client (reusable)
+let adminClient = Client()
+    .setEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .setProject("[PROJECT_ID]")
+    .setKey(Environment.get("APPWRITE_API_KEY")!)
+
+// Session client (create per-request)
+let sessionClient = Client()
+    .setEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .setProject("[PROJECT_ID]")
+
+if let session = req.cookies["a_session_[PROJECT_ID]"]?.string {
+    sessionClient.setSession(session)
+}
+```
+
+#### Email/Password Login (Vapor)
+
+```swift
+app.post("login") { req async throws -> Response in
+    let body = try req.content.decode(LoginRequest.self)
+    let account = Account(adminClient)
+    let session = try await account.createEmailPasswordSession(
+        email: body.email,
+        password: body.password
+    )
+
+    // Cookie name must be a_session_<PROJECT_ID>
+    let response = Response(status: .ok, body: .init(string: "{\"success\": true}"))
+    response.cookies["a_session_[PROJECT_ID]"] = HTTPCookies.Value(
+        string: session.secret,
+        isHTTPOnly: true,
+        isSecure: true,
+        sameSite: .strict,
+        path: "/"
+    )
+    return response
+}
+```
+
+#### Authenticated Requests
+
+```swift
+app.get("user") { req async throws -> Response in
+    guard let session = req.cookies["a_session_[PROJECT_ID]"]?.string else {
+        throw Abort(.unauthorized)
+    }
+
+    let sessionClient = Client()
+        .setEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+        .setProject("[PROJECT_ID]")
+        .setSession(session)
+
+    let account = Account(sessionClient)
+    let user = try await account.get()
+    // Return user as JSON
+}
+```
+
+#### OAuth2 SSR Flow
+
+```swift
+// Step 1: Redirect to OAuth provider
+app.get("oauth") { req async throws -> Response in
+    let account = Account(adminClient)
+    let redirectUrl = try await account.createOAuth2Token(
+        provider: .github,
+        success: "https://example.com/oauth/success",
+        failure: "https://example.com/oauth/failure"
+    )
+    return req.redirect(to: redirectUrl)
+}
+
+// Step 2: Handle callback — exchange token for session
+app.get("oauth", "success") { req async throws -> Response in
+    let userId = try req.query.get(String.self, at: "userId")
+    let secret = try req.query.get(String.self, at: "secret")
+
+    let account = Account(adminClient)
+    let session = try await account.createSession(userId: userId, secret: secret)
+
+    let response = Response(status: .ok, body: .init(string: "{\"success\": true}"))
+    response.cookies["a_session_[PROJECT_ID]"] = HTTPCookies.Value(
+        string: session.secret,
+        isHTTPOnly: true, isSecure: true, sameSite: .strict, path: "/"
+    )
+    return response
+}
+```
+
+> **Cookie security:** Always use `isHTTPOnly`, `isSecure`, and `sameSite: .strict` to prevent XSS. The cookie name must be `a_session_<PROJECT_ID>`.
+
+> **Forwarding user agent:** Call `sessionClient.setForwardedUserAgent(req.headers.first(name: .userAgent) ?? "")` to record the end-user's browser info for debugging and security.
+
+## Permissions & Roles (Critical)
+
+Appwrite uses permission strings to control access to resources. Each permission pairs an action (`read`, `update`, `delete`, `create`, or `write` which grants create + update + delete) with a role target. By default, **no user has access** unless permissions are explicitly set at the document/file level or inherited from the collection/bucket settings. Permissions are arrays of strings built with the `Permission` and `Role` helpers.
+
+```swift
+import Appwrite
+// Permission and Role are included in the main module import
+```
+
+### Database Row with Permissions
+
+```swift
+let doc = try await tablesDB.createRow(
+    databaseId: "[DATABASE_ID]",
+    tableId: "[TABLE_ID]",
+    rowId: ID.unique(),
+    data: ["title": "Hello World"],
+    permissions: [
+        Permission.read(Role.user("[USER_ID]")),     // specific user can read
+        Permission.update(Role.user("[USER_ID]")),   // specific user can update
+        Permission.read(Role.team("[TEAM_ID]")),     // all team members can read
+        Permission.read(Role.any()),                 // anyone (including guests) can read
+    ]
+)
+```
+
+### File Upload with Permissions
+
+```swift
+let file = try await storage.createFile(
+    bucketId: "[BUCKET_ID]",
+    fileId: ID.unique(),
+    file: InputFile.fromPath("/path/to/file.png"),
+    permissions: [
+        Permission.read(Role.any()),
+        Permission.update(Role.user("[USER_ID]")),
+        Permission.delete(Role.user("[USER_ID]")),
+    ]
+)
+```
+
+> **When to set permissions:** Set document/file-level permissions when you need per-resource access control. If all documents in a collection share the same rules, configure permissions at the collection/bucket level and leave document permissions empty.
+
+> **Common mistakes:**
+> - **Forgetting permissions** — the resource becomes inaccessible to all users (including the creator)
+> - **`Role.any()` with `write`/`update`/`delete`** — allows any user, including unauthenticated guests, to modify or remove the resource
+> - **`Permission.read(Role.any())` on sensitive data** — makes the resource publicly readable
+
+## API Reference
+
+For complete method documentation, see the reference files:
+
+- [Account](references/account.md) — The Account service allows you to authenticate and manage a user account.
+- [Avatars](references/avatars.md) — The Avatars service aims to help you complete everyday tasks related to your app image, icons, and avatars.
+- [Assistant](references/assistant.md)
+- [Console](references/console.md) — The Console service allows you to interact with console relevant information.
+- [Databases](references/databases.md) — The Databases service allows you to create structured collections of documents, query and filter lists of documents
+- [Functions](references/functions.md) — The Functions Service allows you view, create and manage your Cloud Functions.
+- [Graphql](references/graphql.md) — The GraphQL API allows you to query and mutate your Appwrite server using GraphQL.
+- [Health](references/health.md) — The Health service allows you to both validate and monitor your Appwrite server&#039;s health.
+- [Locale](references/locale.md) — The Locale service allows you to customize your app based on your users&#039; location.
+- [Messaging](references/messaging.md) — The Messaging service allows you to send messages to any provider type (SMTP, push notification, SMS, etc.).
+- [Migrations](references/migrations.md) — The Migrations service allows you to migrate third-party data to your Appwrite project.
+- [Project](references/project.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Projects](references/projects.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Proxy](references/proxy.md) — The Proxy Service allows you to configure actions for your domains beyond DNS configuration.
+- [Sites](references/sites.md) — The Sites Service allows you view, create and manage your web applications.
+- [Storage](references/storage.md) — The Storage service allows you to manage your project files.
+- [TablesDB](references/tablesdb.md)
+- [Teams](references/teams.md) — The Teams service allows you to group users of your project and to enable them to share read and write access to your project resources
+- [Tokens](references/tokens.md)
+- [Users](references/users.md) — The Users service allows you to manage your project users.
+- [Vcs](references/vcs.md)

@@ -1,0 +1,274 @@
+---
+name: appwrite-dotnet
+description: Appwrite .NET SDK skill. Use when building server-side C# or .NET applications with Appwrite, including ASP.NET and Blazor integrations. Covers user management, database/table CRUD, file storage, and functions via API keys.
+---
+
+
+# Appwrite .NET SDK
+
+## Installation
+
+```bash
+dotnet add package Appwrite
+```
+
+## Setting Up the Client
+
+```csharp
+using Appwrite;
+using Appwrite.Services;
+using Appwrite.Models;
+
+var client = new Client()
+    .SetEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .SetProject(Environment.GetEnvironmentVariable("APPWRITE_PROJECT_ID"))
+    .SetKey(Environment.GetEnvironmentVariable("APPWRITE_API_KEY"));
+```
+
+## Code Examples
+
+### User Management
+
+```csharp
+var users = new Users(client);
+
+// Create user
+var user = await users.Create(ID.Unique(), "user@example.com", null, "password123", "User Name");
+
+// List users
+var list = await users.List(new List<string> { Query.Limit(25) });
+
+// Get user
+var fetched = await users.Get("[USER_ID]");
+
+// Delete user
+await users.Delete("[USER_ID]");
+```
+
+### Database Operations
+
+> **Note:** Use `TablesDB` (not the deprecated `Databases` class) for all new code. Only use `Databases` if the existing codebase already relies on it or the user explicitly requests it.
+
+```csharp
+var tablesDB = new TablesDB(client);
+
+// Create database
+var db = await tablesDB.Create(ID.Unique(), "My Database");
+
+// Create row
+var doc = await tablesDB.CreateRow("[DATABASE_ID]", "[TABLE_ID]", ID.Unique(),
+    new Dictionary<string, object> { { "title", "Hello World" } });
+
+// Query rows
+var results = await tablesDB.ListRows("[DATABASE_ID]", "[TABLE_ID]",
+    new List<string> { Query.Equal("title", "Hello World"), Query.Limit(10) });
+
+// Get row
+var row = await tablesDB.GetRow("[DATABASE_ID]", "[TABLE_ID]", "[ROW_ID]");
+
+// Update row
+await tablesDB.UpdateRow("[DATABASE_ID]", "[TABLE_ID]", "[ROW_ID]",
+    new Dictionary<string, object> { { "title", "Updated" } });
+
+// Delete row
+await tablesDB.DeleteRow("[DATABASE_ID]", "[TABLE_ID]", "[ROW_ID]");
+```
+
+### File Storage
+
+```csharp
+var storage = new Storage(client);
+
+// Upload file
+var file = await storage.CreateFile("[BUCKET_ID]", ID.Unique(), InputFile.FromPath("/path/to/file.png"));
+
+// List files
+var files = await storage.ListFiles("[BUCKET_ID]");
+
+// Delete file
+await storage.DeleteFile("[BUCKET_ID]", "[FILE_ID]");
+```
+
+### Serverless Functions
+
+```csharp
+var functions = new Functions(client);
+
+// Execute function
+var execution = await functions.CreateExecution("[FUNCTION_ID]", body: "{\"key\": \"value\"}");
+
+// List executions
+var executions = await functions.ListExecutions("[FUNCTION_ID]");
+```
+
+### Server-Side Rendering (SSR) Authentication
+
+SSR apps using .NET frameworks (ASP.NET, Blazor Server, etc.) use the **server SDK** to handle auth. You need two clients:
+
+- **Admin client** — uses an API key, creates sessions, bypasses rate limits (reusable singleton)
+- **Session client** — uses a session cookie, acts on behalf of a user (create per-request, never share)
+
+```csharp
+using Appwrite;
+using Appwrite.Services;
+
+// Admin client (reusable)
+var adminClient = new Client()
+    .SetEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .SetProject("[PROJECT_ID]")
+    .SetKey(Environment.GetEnvironmentVariable("APPWRITE_API_KEY"));
+
+// Session client (create per-request)
+var sessionClient = new Client()
+    .SetEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+    .SetProject("[PROJECT_ID]");
+
+var session = Request.Cookies["a_session_[PROJECT_ID]"];
+if (session != null)
+{
+    sessionClient.SetSession(session);
+}
+```
+
+#### Email/Password Login (ASP.NET Minimal API)
+
+```csharp
+app.MapPost("/login", async (HttpContext ctx, LoginRequest body) =>
+{
+    var account = new Account(adminClient);
+    var session = await account.CreateEmailPasswordSession(body.Email, body.Password);
+
+    // Cookie name must be a_session_<PROJECT_ID>
+    ctx.Response.Cookies.Append("a_session_[PROJECT_ID]", session.Secret, new CookieOptions
+    {
+        HttpOnly = true,
+        Secure = true,
+        SameSite = SameSiteMode.Strict,
+        Path = "/",
+    });
+
+    return Results.Ok(new { success = true });
+});
+```
+
+#### Authenticated Requests
+
+```csharp
+app.MapGet("/user", async (HttpContext ctx) =>
+{
+    var session = ctx.Request.Cookies["a_session_[PROJECT_ID]"];
+    if (session == null) return Results.Unauthorized();
+
+    var sessionClient = new Client()
+        .SetEndpoint("https://<REGION>.cloud.appwrite.io/v1")
+        .SetProject("[PROJECT_ID]")
+        .SetSession(session);
+
+    var account = new Account(sessionClient);
+    var user = await account.Get();
+    return Results.Ok(user);
+});
+```
+
+#### OAuth2 SSR Flow
+
+```csharp
+// Step 1: Redirect to OAuth provider
+app.MapGet("/oauth", async () =>
+{
+    var account = new Account(adminClient);
+    var redirectUrl = await account.CreateOAuth2Token(
+        provider: OAuthProvider.Github,
+        success: "https://example.com/oauth/success",
+        failure: "https://example.com/oauth/failure"
+    );
+    return Results.Redirect(redirectUrl);
+});
+
+// Step 2: Handle callback — exchange token for session
+app.MapGet("/oauth/success", async (HttpContext ctx, string userId, string secret) =>
+{
+    var account = new Account(adminClient);
+    var session = await account.CreateSession(userId, secret);
+
+    ctx.Response.Cookies.Append("a_session_[PROJECT_ID]", session.Secret, new CookieOptions
+    {
+        HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/",
+    });
+
+    return Results.Ok(new { success = true });
+});
+```
+
+> **Cookie security:** Always use `HttpOnly`, `Secure`, and `SameSite = SameSiteMode.Strict` to prevent XSS. The cookie name must be `a_session_<PROJECT_ID>`.
+
+> **Forwarding user agent:** Call `sessionClient.SetForwardedUserAgent(ctx.Request.Headers["User-Agent"])` to record the end-user's browser info for debugging and security.
+
+## Permissions & Roles (Critical)
+
+Appwrite uses permission strings to control access to resources. Each permission pairs an action (`read`, `update`, `delete`, `create`, or `write` which grants create + update + delete) with a role target. By default, **no user has access** unless permissions are explicitly set at the document/file level or inherited from the collection/bucket settings. Permissions are arrays of strings built with the `Permission` and `Role` helpers.
+
+```csharp
+using Appwrite;
+// Permission and Role are included in the main namespace
+```
+
+### Database Row with Permissions
+
+```csharp
+var doc = await tablesDB.CreateRow("[DATABASE_ID]", "[TABLE_ID]", ID.Unique(),
+    new Dictionary<string, object> { { "title", "Hello World" } },
+    new List<string>
+    {
+        Permission.Read(Role.User("[USER_ID]")),     // specific user can read
+        Permission.Update(Role.User("[USER_ID]")),   // specific user can update
+        Permission.Read(Role.Team("[TEAM_ID]")),     // all team members can read
+        Permission.Read(Role.Any()),                 // anyone (including guests) can read
+    });
+```
+
+### File Upload with Permissions
+
+```csharp
+var file = await storage.CreateFile("[BUCKET_ID]", ID.Unique(),
+    InputFile.FromPath("/path/to/file.png"),
+    new List<string>
+    {
+        Permission.Read(Role.Any()),
+        Permission.Update(Role.User("[USER_ID]")),
+        Permission.Delete(Role.User("[USER_ID]")),
+    });
+```
+
+> **When to set permissions:** Set document/file-level permissions when you need per-resource access control. If all documents in a collection share the same rules, configure permissions at the collection/bucket level and leave document permissions empty.
+
+> **Common mistakes:**
+> - **Forgetting permissions** — the resource becomes inaccessible to all users (including the creator)
+> - **`Role.Any()` with `write`/`update`/`delete`** — allows any user, including unauthenticated guests, to modify or remove the resource
+> - **`Permission.Read(Role.Any())` on sensitive data** — makes the resource publicly readable
+
+## API Reference
+
+For complete method documentation, see the reference files:
+
+- [Account](references/account.md) — The Account service allows you to authenticate and manage a user account.
+- [Avatars](references/avatars.md) — The Avatars service aims to help you complete everyday tasks related to your app image, icons, and avatars.
+- [Assistant](references/assistant.md)
+- [Console](references/console.md) — The Console service allows you to interact with console relevant information.
+- [Databases](references/databases.md) — The Databases service allows you to create structured collections of documents, query and filter lists of documents
+- [Functions](references/functions.md) — The Functions Service allows you view, create and manage your Cloud Functions.
+- [Graphql](references/graphql.md) — The GraphQL API allows you to query and mutate your Appwrite server using GraphQL.
+- [Health](references/health.md) — The Health service allows you to both validate and monitor your Appwrite server&#039;s health.
+- [Locale](references/locale.md) — The Locale service allows you to customize your app based on your users&#039; location.
+- [Messaging](references/messaging.md) — The Messaging service allows you to send messages to any provider type (SMTP, push notification, SMS, etc.).
+- [Migrations](references/migrations.md) — The Migrations service allows you to migrate third-party data to your Appwrite project.
+- [Project](references/project.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Projects](references/projects.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Proxy](references/proxy.md) — The Proxy Service allows you to configure actions for your domains beyond DNS configuration.
+- [Sites](references/sites.md) — The Sites Service allows you view, create and manage your web applications.
+- [Storage](references/storage.md) — The Storage service allows you to manage your project files.
+- [TablesDB](references/tablesdb.md)
+- [Teams](references/teams.md) — The Teams service allows you to group users of your project and to enable them to share read and write access to your project resources
+- [Tokens](references/tokens.md)
+- [Users](references/users.md) — The Users service allows you to manage your project users.
+- [Vcs](references/vcs.md)
