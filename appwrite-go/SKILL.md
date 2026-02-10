@@ -1,0 +1,327 @@
+---
+name: appwrite-go
+description: Appwrite Go SDK skill. Use when building server-side Go applications with Appwrite. Covers user management, database/table CRUD, file storage, and functions via API keys. Uses per-service packages and functional options pattern.
+---
+
+
+# Appwrite Go SDK
+
+## Installation
+
+```bash
+go get github.com/ChiragAgg5k/sdk-for-go
+```
+
+## Setting Up the Client
+
+```go
+import (
+    "os"
+
+    "github.com/ChiragAgg5k/sdk-for-go/client"
+    "github.com/ChiragAgg5k/sdk-for-go/id"
+    "github.com/ChiragAgg5k/sdk-for-go/users"
+    "github.com/ChiragAgg5k/sdk-for-go/tablesdb"
+    "github.com/ChiragAgg5k/sdk-for-go/storage"
+)
+
+clt := client.New(
+    client.WithEndpoint("https://<REGION>.cloud.appwrite.io/v1"),
+    client.WithProject(os.Getenv("APPWRITE_PROJECT_ID")),
+    client.WithKey(os.Getenv("APPWRITE_API_KEY")),
+)
+```
+
+## Code Examples
+
+### User Management
+
+```go
+service := users.New(clt)
+
+// Create user
+user, err := service.Create(
+    id.Unique(),
+    "user@example.com",
+    "password123",
+    users.WithCreateName("User Name"),
+)
+
+// List users
+list, err := service.List()
+
+// Get user
+fetched, err := service.Get("[USER_ID]")
+
+// Delete user
+_, err = service.Delete("[USER_ID]")
+```
+
+### Database Operations
+
+> **Note:** Use `TablesDB` (not the deprecated `Databases` class) for all new code. Only use `Databases` if the existing codebase already relies on it or the user explicitly requests it.
+
+```go
+service := tablesdb.New(clt)
+
+// Create database
+db, err := service.Create(id.Unique(), "My Database")
+
+// Create row
+doc, err := service.CreateRow(
+    "[DATABASE_ID]",
+    "[TABLE_ID]",
+    id.Unique(),
+    map[string]interface{}{"title": "Hello World"},
+)
+
+// List rows
+results, err := service.ListRows("[DATABASE_ID]", "[TABLE_ID]")
+
+// Get row
+row, err := service.GetRow("[DATABASE_ID]", "[TABLE_ID]", "[ROW_ID]")
+
+// Update row
+_, err = service.UpdateRow(
+    "[DATABASE_ID]",
+    "[TABLE_ID]",
+    "[ROW_ID]",
+    tablesdb.WithUpdateRowData(map[string]interface{}{"title": "Updated"}),
+)
+
+// Delete row
+_, err = service.DeleteRow("[DATABASE_ID]", "[TABLE_ID]", "[ROW_ID]")
+```
+
+### File Storage
+
+```go
+import "github.com/ChiragAgg5k/sdk-for-go/file"
+
+service := storage.New(clt)
+
+// Upload file
+f, err := service.CreateFile(
+    "[BUCKET_ID]",
+    "[FILE_ID]",
+    file.NewInputFile("/path/to/file.png", "file.png"),
+)
+
+// List files
+files, err := service.ListFiles("[BUCKET_ID]")
+
+// Delete file
+_, err = service.DeleteFile("[BUCKET_ID]", "[FILE_ID]")
+```
+
+### Serverless Functions
+
+```go
+import "github.com/ChiragAgg5k/sdk-for-go/functions"
+
+svc := functions.New(clt)
+
+// Execute function
+execution, err := svc.CreateExecution(
+    "[FUNCTION_ID]",
+    functions.WithCreateExecutionBody(`{"key": "value"}`),
+)
+
+// List executions
+executions, err := svc.ListExecutions("[FUNCTION_ID]")
+```
+
+### Server-Side Rendering (SSR) Authentication
+
+SSR apps using Go frameworks (net/http, Gin, Echo, Chi, etc.) use the **server SDK** to handle auth. You need two clients:
+
+- **Admin client** — uses an API key, creates sessions, bypasses rate limits (reusable singleton)
+- **Session client** — uses a session cookie, acts on behalf of a user (create per-request, never share)
+
+```go
+import (
+    "github.com/ChiragAgg5k/sdk-for-go/client"
+    "github.com/ChiragAgg5k/sdk-for-go/account"
+)
+
+// Admin client (reusable)
+adminClient := client.New(
+    client.WithEndpoint("https://<REGION>.cloud.appwrite.io/v1"),
+    client.WithProject(os.Getenv("APPWRITE_PROJECT_ID")),
+    client.WithKey(os.Getenv("APPWRITE_API_KEY")),
+)
+
+// Session client (create per-request)
+sessionClient := client.New(
+    client.WithEndpoint("https://<REGION>.cloud.appwrite.io/v1"),
+    client.WithProject(os.Getenv("APPWRITE_PROJECT_ID")),
+)
+
+cookie, err := r.Cookie("a_session_[PROJECT_ID]")
+if err == nil {
+    sessionClient.SetSession(cookie.Value)
+}
+```
+
+#### Email/Password Login
+
+```go
+http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+    svc := account.New(adminClient)
+    session, err := svc.CreateEmailPasswordSession(r.FormValue("email"), r.FormValue("password"))
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+
+    // Cookie name must be a_session_<PROJECT_ID>
+    http.SetCookie(w, &http.Cookie{
+        Name:     "a_session_[PROJECT_ID]",
+        Value:    session.Secret,
+        HttpOnly: true,
+        Secure:   true,
+        SameSite: http.SameSiteStrictMode,
+        Path:     "/",
+    })
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Write([]byte(`{"success": true}`))
+})
+```
+
+#### Authenticated Requests
+
+```go
+http.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+    cookie, err := r.Cookie("a_session_[PROJECT_ID]")
+    if err != nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    sessionClient := client.New(
+        client.WithEndpoint("https://<REGION>.cloud.appwrite.io/v1"),
+        client.WithProject(os.Getenv("APPWRITE_PROJECT_ID")),
+        client.WithSession(cookie.Value),
+    )
+
+    svc := account.New(sessionClient)
+    user, err := svc.Get()
+    // Marshal user to JSON and write response
+})
+```
+
+#### OAuth2 SSR Flow
+
+```go
+// Step 1: Redirect to OAuth provider
+http.HandleFunc("/oauth", func(w http.ResponseWriter, r *http.Request) {
+    svc := account.New(adminClient)
+    redirectURL, err := svc.CreateOAuth2Token(
+        "github",
+        account.WithCreateOAuth2TokenSuccess("https://example.com/oauth/success"),
+        account.WithCreateOAuth2TokenFailure("https://example.com/oauth/failure"),
+    )
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    http.Redirect(w, r, redirectURL, http.StatusFound)
+})
+
+// Step 2: Handle callback — exchange token for session
+http.HandleFunc("/oauth/success", func(w http.ResponseWriter, r *http.Request) {
+    svc := account.New(adminClient)
+    session, err := svc.CreateSession(r.URL.Query().Get("userId"), r.URL.Query().Get("secret"))
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+
+    http.SetCookie(w, &http.Cookie{
+        Name: "a_session_[PROJECT_ID]", Value: session.Secret,
+        HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Path: "/",
+    })
+    w.Write([]byte(`{"success": true}`))
+})
+```
+
+> **Cookie security:** Always use `HttpOnly`, `Secure`, and `SameSiteStrictMode` to prevent XSS. The cookie name must be `a_session_<PROJECT_ID>`.
+
+> **Forwarding user agent:** Call `sessionClient.SetForwardedUserAgent(r.Header.Get("User-Agent"))` to record the end-user's browser info for debugging and security.
+
+## Permissions & Roles (Critical)
+
+Appwrite uses permission strings to control access to resources. Each permission pairs an action (`read`, `update`, `delete`, `create`, or `write` which grants create + update + delete) with a role target. By default, **no user has access** unless permissions are explicitly set at the document/file level or inherited from the collection/bucket settings. Permissions are arrays of strings built with the `permission` and `role` helpers.
+
+```go
+import (
+    "github.com/ChiragAgg5k/sdk-for-go/permission"
+    "github.com/ChiragAgg5k/sdk-for-go/role"
+)
+```
+
+### Database Row with Permissions
+
+```go
+doc, err := service.CreateRow(
+    "[DATABASE_ID]",
+    "[TABLE_ID]",
+    "[ROW_ID]",
+    map[string]interface{}{"title": "Hello World"},
+    tablesdb.WithCreateRowPermissions([]string{
+        permission.Read(role.User("[USER_ID]")),     // specific user can read
+        permission.Update(role.User("[USER_ID]")),   // specific user can update
+        permission.Read(role.Team("[TEAM_ID]")),     // all team members can read
+        permission.Read(role.Any()),                 // anyone (including guests) can read
+    }),
+)
+```
+
+### File Upload with Permissions
+
+```go
+f, err := service.CreateFile(
+    "[BUCKET_ID]",
+    "[FILE_ID]",
+    file.NewInputFile("/path/to/file.png", "file.png"),
+    storage.WithCreateFilePermissions([]string{
+        permission.Read(role.Any()),
+        permission.Update(role.User("[USER_ID]")),
+        permission.Delete(role.User("[USER_ID]")),
+    }),
+)
+```
+
+> **When to set permissions:** Set document/file-level permissions when you need per-resource access control. If all documents in a collection share the same rules, configure permissions at the collection/bucket level and leave document permissions empty.
+
+> **Common mistakes:**
+> - **Forgetting permissions** — the resource becomes inaccessible to all users (including the creator)
+> - **`role.Any()` with `write`/`update`/`delete`** — allows any user, including unauthenticated guests, to modify or remove the resource
+> - **`permission.Read(role.Any())` on sensitive data** — makes the resource publicly readable
+
+## API Reference
+
+For complete method documentation, see the reference files:
+
+- [Account](references/account.md) — The Account service allows you to authenticate and manage a user account.
+- [Avatars](references/avatars.md) — The Avatars service aims to help you complete everyday tasks related to your app image, icons, and avatars.
+- [Assistant](references/assistant.md)
+- [Console](references/console.md) — The Console service allows you to interact with console relevant information.
+- [Databases](references/databases.md) — The Databases service allows you to create structured collections of documents, query and filter lists of documents
+- [Functions](references/functions.md) — The Functions Service allows you view, create and manage your Cloud Functions.
+- [Graphql](references/graphql.md) — The GraphQL API allows you to query and mutate your Appwrite server using GraphQL.
+- [Health](references/health.md) — The Health service allows you to both validate and monitor your Appwrite server&#039;s health.
+- [Locale](references/locale.md) — The Locale service allows you to customize your app based on your users&#039; location.
+- [Messaging](references/messaging.md) — The Messaging service allows you to send messages to any provider type (SMTP, push notification, SMS, etc.).
+- [Migrations](references/migrations.md) — The Migrations service allows you to migrate third-party data to your Appwrite project.
+- [Project](references/project.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Projects](references/projects.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Proxy](references/proxy.md) — The Proxy Service allows you to configure actions for your domains beyond DNS configuration.
+- [Sites](references/sites.md) — The Sites Service allows you view, create and manage your web applications.
+- [Storage](references/storage.md) — The Storage service allows you to manage your project files.
+- [TablesDB](references/tablesdb.md)
+- [Teams](references/teams.md) — The Teams service allows you to group users of your project and to enable them to share read and write access to your project resources
+- [Tokens](references/tokens.md)
+- [Users](references/users.md) — The Users service allows you to manage your project users.
+- [Vcs](references/vcs.md)

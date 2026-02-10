@@ -1,0 +1,335 @@
+---
+name: appwrite-dart
+description: Appwrite Dart SDK skill. Use when building Flutter apps (mobile, web, desktop) or server-side Dart applications with Appwrite. Covers client-side auth (email, OAuth), database queries, file uploads with native file handling, real-time subscriptions, and server-side admin via API keys for user management, database administration, storage, and functions.
+---
+
+
+# Appwrite Dart SDK
+
+## Installation
+
+```bash
+# Flutter (client-side)
+flutter pub add appwrite
+
+# Dart (server-side)
+dart pub add dart_appwrite
+```
+
+## Setting Up the Client
+
+### Client-side (Flutter)
+
+```dart
+import 'package:appwrite/appwrite.dart';
+
+final client = Client()
+    .setEndpoint('https://<REGION>.cloud.appwrite.io/v1')
+    .setProject('[PROJECT_ID]');
+```
+
+### Server-side (Dart)
+
+```dart
+import 'package:dart_appwrite/dart_appwrite.dart';
+
+final client = Client()
+    .setEndpoint('https://<REGION>.cloud.appwrite.io/v1')
+    .setProject(Platform.environment['APPWRITE_PROJECT_ID']!)
+    .setKey(Platform.environment['APPWRITE_API_KEY']!);
+```
+
+## Code Examples
+
+### Authentication (client-side)
+
+```dart
+final account = Account(client);
+
+// Signup
+await account.create(userId: ID.unique(), email: 'user@example.com', password: 'password123', name: 'User Name');
+
+// Login
+final session = await account.createEmailPasswordSession(email: 'user@example.com', password: 'password123');
+
+// OAuth login
+await account.createOAuth2Session(provider: OAuthProvider.google);
+
+// Get current user
+final user = await account.get();
+
+// Logout
+await account.deleteSession(sessionId: 'current');
+```
+
+### User Management (server-side)
+
+```dart
+final users = Users(client);
+
+// Create user
+final user = await users.create(userId: ID.unique(), email: 'user@example.com', password: 'password123', name: 'User Name');
+
+// List users
+final list = await users.list(queries: [Query.limit(25)]);
+
+// Get user
+final fetched = await users.get(userId: '[USER_ID]');
+
+// Delete user
+await users.delete(userId: '[USER_ID]');
+```
+
+### Database Operations
+
+> **Note:** Use `TablesDB` (not the deprecated `Databases` class) for all new code. Only use `Databases` if the existing codebase already relies on it or the user explicitly requests it.
+
+```dart
+final tablesDB = TablesDB(client);
+
+// Create database (server-side only)
+final db = await tablesDB.create(databaseId: ID.unique(), name: 'My Database');
+
+// Create table (server-side only)
+final col = await tablesDB.createTable(databaseId: '[DATABASE_ID]', tableId: ID.unique(), name: 'My Table');
+
+// Create row
+final doc = await tablesDB.createRow(
+    databaseId: '[DATABASE_ID]',
+    tableId: '[TABLE_ID]',
+    rowId: ID.unique(),
+    data: {'title': 'Hello', 'done': false},
+);
+
+// Query rows
+final results = await tablesDB.listRows(
+    databaseId: '[DATABASE_ID]',
+    tableId: '[TABLE_ID]',
+    queries: [Query.equal('done', false), Query.limit(10)],
+);
+
+// Get row
+final row = await tablesDB.getRow(databaseId: '[DATABASE_ID]', tableId: '[TABLE_ID]', rowId: '[ROW_ID]');
+
+// Update row
+await tablesDB.updateRow(
+    databaseId: '[DATABASE_ID]',
+    tableId: '[TABLE_ID]',
+    rowId: '[ROW_ID]',
+    data: {'done': true},
+);
+
+// Delete row
+await tablesDB.deleteRow(
+    databaseId: '[DATABASE_ID]',
+    tableId: '[TABLE_ID]',
+    rowId: '[ROW_ID]',
+);
+```
+
+### File Storage
+
+```dart
+final storage = Storage(client);
+
+// Upload file
+final file = await storage.createFile(
+    bucketId: '[BUCKET_ID]',
+    fileId: ID.unique(),
+    file: InputFile.fromPath(path: '/path/to/file.png', filename: 'file.png'),
+);
+
+// Get file preview
+final preview = storage.getFilePreview(bucketId: '[BUCKET_ID]', fileId: '[FILE_ID]', width: 300, height: 300);
+
+// List files
+final files = await storage.listFiles(bucketId: '[BUCKET_ID]');
+
+// Delete file
+await storage.deleteFile(bucketId: '[BUCKET_ID]', fileId: '[FILE_ID]');
+```
+
+### Real-time Subscriptions (client-side)
+
+```dart
+final realtime = Realtime(client);
+
+final subscription = realtime.subscribe(['databases.[DATABASE_ID].tables.[TABLE_ID].rows']);
+subscription.stream.listen((response) {
+    print(response.payload);
+});
+
+// Cleanup
+subscription.close();
+```
+
+### Serverless Functions (server-side)
+
+```dart
+final functions = Functions(client);
+
+// Execute function
+final execution = await functions.createExecution(functionId: '[FUNCTION_ID]', body: '{"key": "value"}');
+
+// List executions
+final executions = await functions.listExecutions(functionId: '[FUNCTION_ID]');
+```
+
+### Server-Side Rendering (SSR) Authentication
+
+SSR apps using server-side Dart (Dart Frog, Shelf, etc.) use the **server SDK** (`dart_appwrite`) to handle auth. You need two clients:
+
+- **Admin client** — uses an API key, creates sessions, bypasses rate limits (reusable singleton)
+- **Session client** — uses a session cookie, acts on behalf of a user (create per-request, never share)
+
+```dart
+import 'package:dart_appwrite/dart_appwrite.dart';
+
+// Admin client (reusable)
+final adminClient = Client()
+    .setEndpoint('https://<REGION>.cloud.appwrite.io/v1')
+    .setProject('[PROJECT_ID]')
+    .setKey(Platform.environment['APPWRITE_API_KEY']!);
+
+// Session client (create per-request)
+final sessionClient = Client()
+    .setEndpoint('https://<REGION>.cloud.appwrite.io/v1')
+    .setProject('[PROJECT_ID]');
+
+final session = request.cookies['a_session_[PROJECT_ID]'];
+if (session != null) {
+    sessionClient.setSession(session);
+}
+```
+
+#### Email/Password Login
+
+```dart
+final account = Account(adminClient);
+final session = await account.createEmailPasswordSession(
+    email: body['email'],
+    password: body['password'],
+);
+
+// Cookie name must be a_session_<PROJECT_ID>
+response.headers.add('Set-Cookie',
+    'a_session_[PROJECT_ID]=${session.secret}; '
+    'HttpOnly; Secure; SameSite=Strict; '
+    'Expires=${HttpDate.format(DateTime.parse(session.expire))}; Path=/');
+```
+
+#### Authenticated Requests
+
+```dart
+final session = request.cookies['a_session_[PROJECT_ID]'];
+if (session == null) {
+    return Response(statusCode: 401, body: 'Unauthorized');
+}
+
+final sessionClient = Client()
+    .setEndpoint('https://<REGION>.cloud.appwrite.io/v1')
+    .setProject('[PROJECT_ID]')
+    .setSession(session);
+
+final account = Account(sessionClient);
+final user = await account.get();
+```
+
+#### OAuth2 SSR Flow
+
+```dart
+// Step 1: Redirect to OAuth provider
+final account = Account(adminClient);
+final redirectUrl = await account.createOAuth2Token(
+    provider: OAuthProvider.github,
+    success: 'https://example.com/oauth/success',
+    failure: 'https://example.com/oauth/failure',
+);
+return Response(statusCode: 302, headers: {'Location': redirectUrl});
+
+// Step 2: Handle callback — exchange token for session
+final account = Account(adminClient);
+final session = await account.createSession(
+    userId: request.uri.queryParameters['userId']!,
+    secret: request.uri.queryParameters['secret']!,
+);
+// Set session cookie as above
+```
+
+> **Cookie security:** Always use `HttpOnly`, `Secure`, and `SameSite=Strict` to prevent XSS. The cookie name must be `a_session_<PROJECT_ID>`.
+
+> **Forwarding user agent:** Call `sessionClient.setForwardedUserAgent(request.headers['user-agent'])` to record the end-user's browser info for debugging and security.
+
+## Permissions & Roles (Critical)
+
+Appwrite uses permission strings to control access to resources. Each permission pairs an action (`read`, `update`, `delete`, `create`, or `write` which grants create + update + delete) with a role target. By default, **no user has access** unless permissions are explicitly set at the document/file level or inherited from the collection/bucket settings. Permissions are arrays of strings built with the `Permission` and `Role` helpers.
+
+```dart
+import 'package:appwrite/appwrite.dart';
+// Permission and Role are included in the main package import
+```
+
+### Database Row with Permissions
+
+```dart
+final doc = await tablesDB.createRow(
+    databaseId: '[DATABASE_ID]',
+    tableId: '[TABLE_ID]',
+    rowId: ID.unique(),
+    data: {'title': 'Hello World'},
+    permissions: [
+        Permission.read(Role.user('[USER_ID]')),     // specific user can read
+        Permission.update(Role.user('[USER_ID]')),   // specific user can update
+        Permission.read(Role.team('[TEAM_ID]')),     // all team members can read
+        Permission.read(Role.any()),                 // anyone (including guests) can read
+    ],
+);
+```
+
+### File Upload with Permissions
+
+```dart
+final file = await storage.createFile(
+    bucketId: '[BUCKET_ID]',
+    fileId: ID.unique(),
+    file: InputFile.fromPath(path: '/path/to/file.png', filename: 'file.png'),
+    permissions: [
+        Permission.read(Role.any()),
+        Permission.update(Role.user('[USER_ID]')),
+        Permission.delete(Role.user('[USER_ID]')),
+    ],
+);
+```
+
+> **When to set permissions:** Set document/file-level permissions when you need per-resource access control. If all documents in a collection share the same rules, configure permissions at the collection/bucket level and leave document permissions empty.
+
+> **Common mistakes:**
+> - **Forgetting permissions** — the resource becomes inaccessible to all users (including the creator)
+> - **`Role.any()` with `write`/`update`/`delete`** — allows any user, including unauthenticated guests, to modify or remove the resource
+> - **`Permission.read(Role.any())` on sensitive data** — makes the resource publicly readable
+
+## API Reference
+
+For complete method documentation, see the reference files:
+
+- [Account](references/account.md) — The Account service allows you to authenticate and manage a user account.
+- [Avatars](references/avatars.md) — The Avatars service aims to help you complete everyday tasks related to your app image, icons, and avatars.
+- [Assistant](references/assistant.md)
+- [Console](references/console.md) — The Console service allows you to interact with console relevant information.
+- [Databases](references/databases.md) — The Databases service allows you to create structured collections of documents, query and filter lists of documents
+- [Functions](references/functions.md) — The Functions Service allows you view, create and manage your Cloud Functions.
+- [Graphql](references/graphql.md) — The GraphQL API allows you to query and mutate your Appwrite server using GraphQL.
+- [Health](references/health.md) — The Health service allows you to both validate and monitor your Appwrite server&#039;s health.
+- [Locale](references/locale.md) — The Locale service allows you to customize your app based on your users&#039; location.
+- [Messaging](references/messaging.md) — The Messaging service allows you to send messages to any provider type (SMTP, push notification, SMS, etc.).
+- [Migrations](references/migrations.md) — The Migrations service allows you to migrate third-party data to your Appwrite project.
+- [Project](references/project.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Projects](references/projects.md) — The Project service allows you to manage all the projects in your Appwrite server.
+- [Proxy](references/proxy.md) — The Proxy Service allows you to configure actions for your domains beyond DNS configuration.
+- [Sites](references/sites.md) — The Sites Service allows you view, create and manage your web applications.
+- [Storage](references/storage.md) — The Storage service allows you to manage your project files.
+- [TablesDB](references/tablesdb.md)
+- [Teams](references/teams.md) — The Teams service allows you to group users of your project and to enable them to share read and write access to your project resources
+- [Tokens](references/tokens.md)
+- [Users](references/users.md) — The Users service allows you to manage your project users.
+- [Vcs](references/vcs.md)
